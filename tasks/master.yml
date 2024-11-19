@@ -1,0 +1,65 @@
+- name: Configure Master Nodes with Kubernetes and Calico
+  hosts: master
+  vars_prompt:
+    - name: reset
+      prompt: "Do you want to enable reset before kubeadm installation [yes/no]"
+      private: no
+  tasks:
+    - include_vars: ../variable/vars.yml
+
+    - name: Pull Kubeadm images
+      shell: |
+        kubeadm config images pull
+
+    - name: Reset Kubernetes (if requested)
+      shell: |
+        kubeadm reset -f
+      when: reset == "yes"
+
+    - name: Initialize Primary Master Node
+      shell: |
+        kubeadm init --pod-network-cidr=192.168.0.0/16 --apiserver-advertise-address={{ master_ip }} --apiserver-cert-extra-sans={{ master_ip }}
+      register: token
+      when: inventory_hostname == "master"
+
+    - name: Save kubeadm token to a file (Primary Master only)
+      local_action: copy content="{{ token.stdout }}" dest="/root/token_file.txt"
+      when: inventory_hostname == "master"
+
+    - name: Create .kube directory
+      file:
+        path: /root/.kube
+        state: directory
+
+    - name: Configure Kubernetes admin.conf
+      shell: |
+        yes | cp /etc/kubernetes/admin.conf $HOME/.kube/config
+      when: inventory_hostname == "master"
+
+    - name: Initialize Additional Master Node (Master2)
+      shell: |
+        kubeadm join {{ master_ip }}:6443 \
+          --token $(cat /root/token_file.txt | grep -oP '^\S+') \
+          --discovery-token-ca-cert-hash sha256:$(cat /root/token_file.txt | grep sha256 | cut -d' ' -f2) \
+          --control-plane
+      when: inventory_hostname == "master2"
+
+    - name: Install Calico Operator
+      shell: |
+        kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.0/manifests/tigera-operator.yaml
+      when: inventory_hostname == "master"
+
+    - name: Download Calico custom resources
+      shell: |
+        curl -O https://raw.githubusercontent.com/projectcalico/calico/v3.29.0/manifests/custom-resources.yaml
+      when: inventory_hostname == "master"
+
+    - name: Apply Calico custom resources
+      shell: |
+        kubectl create -f custom-resources.yaml
+      when: inventory_hostname == "master"
+
+    - name: Verify Calico Pods
+      shell: |
+        kubectl get pods -n calico-system
+      when: inventory_hostname == "master"

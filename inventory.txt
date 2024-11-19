@@ -1,0 +1,7 @@
+[master]
+172.16.103.40 ansible_user=amen
+
+[worker]
+172.16.103.55 ansible_user=amen
+172.16.103.69 ansible_user=amen
+172.16.103.88 ansible_user=amen
